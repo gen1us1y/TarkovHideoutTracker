@@ -6,8 +6,8 @@
 Python 3.8+
 Браузер (Chrome, Firefox, Edge)
 2. Клонирование и установка
-<code>
-  git clone https://github.com/your-username/eft-hideout-tracker.git
+
+<code>  git clone https://github.com/your-username/eft-hideout-tracker.git
   cd eft-hideout-tracker
   pip install flask
 </code>
