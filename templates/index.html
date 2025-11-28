@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Shelter Tracker</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <div class="left">
+            <h2>Модули</h2>
+            {% for mod in modules %}
+            <div class="module">
+                <strong>{{ mod.name }}</strong>
+                <select onchange="updateLevel('{{ mod.name|e }}', this.value)">
+                    {% for lvl in range(0, mod.max_level + 1) %}
+                        <option value="{{ lvl }}" {% if lvl == mod.current_level %}selected{% endif %}>
+                            Уровень {{ lvl }} / {{ mod.max_level }}
+                        </option>
+                    {% endfor %}
+                </select>
+            </div>
+            {% endfor %}
+        </div>
+
+        <div class="right">
+            <div class="tabs">
+                <button type="button" class="tab-btn active" data-tab="remaining">Осталось собрать</button>
+                <button type="button" class="tab-btn" data-tab="next-level">На следующий уровень</button>
+            </div>
+        
+            <!-- Контейнеры вкладок -->
+            <div id="tab-remaining" class="tab-content active">
+                <h2>Осталось собрать</h2>
+                {% if items %}
+                <table id="items-table">
+                    <thead><tr>
+                        <th></th>
+                        <th>Предмет</th>
+                        <th>Нужно</th>
+                        <th>Есть ✏️</th>
+                        <th>Осталось</th>
+                    </tr></thead>
+                    <tbody id="items-tbody">
+                        {% for item in items %}
+                        <tr data-item-name="{{ item.item_name|e }}">
+                            <td><img src="{{ url_for('static', filename='img/' + item.item_image) }}" alt="{{ item.item_name|e }}" width="48"></td>
+                            <td>{{ item.item_name|e }}</td>
+                            <td class="need-col">{{ item.need }}</td>
+                            <td>
+                                <input type="number" min="0" value="{{ item.have }}"
+                                       data-item-name="{{ item.item_name|e }}"
+                                       style="width:60px; text-align:right;">
+                            </td>
+                            <td class="left-col" style="font-weight: bold; color: {{ 'green' if item.left == 0 else 'red' }}">
+                                {{ item.left }}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% else %}
+                <p>✅ Всё собрано!</p>
+                {% endif %}
+            </div>
+        
+            <div id="tab-next-level" class="tab-content">
+                <h2>На следующий уровень</h2>
+                <div id="next-level-loader" style="display:none;">Загрузка…</div>
+                <table id="next-level-table" style="display:none;">
+                    <thead><tr>
+                        <th></th>
+                        <th>Предмет</th>
+                        <th>Нужно</th>
+                        <th>Есть ✏️</th>
+                        <th>Не хватает</th>
+                    </tr></thead>
+                    <tbody id="next-level-tbody"></tbody>
+                </table>
+                <p id="next-level-empty" style="display:none;">✅ Все модули на макс. уровне или ресурсы собраны!</p>
+            </div>
+        </div>
+
+    <script>
+        // Обновление "Есть"
+        function updateHave(itemName, value) {
+            if (!itemName || typeof itemName !== 'string') {
+                console.warn('Пропущено обновление: неверное имя предмета', itemName);
+                return;
+            }
+
+            fetch('/update_have', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ item: itemName, have: value })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (!data.success) {
+                    alert('❌ Ошибка: ' + (data.error || 'неизвестная'));
+                    return;
+                }
+
+                // Находим ВСЕ строки с этим item_name (может быть в обеих вкладках!)
+                const rows = document.querySelectorAll(`tr[data-item-name="${CSS.escape(itemName)}"]`);
+                rows.forEach(row => updateRowUI(row, value));
+            })
+            .catch(err => {
+                console.error('Ошибка:', err);
+                alert('❌ Не удалось обновить количество');
+            });
+        }
+
+        function updateRowUI(row, newHave) {
+            const needCell = row.querySelector('.need-col');
+            const haveInput = row.querySelector('input[type="number"]');
+            const leftCell = row.querySelector('.left-col');
+
+            if (!needCell || !haveInput || !leftCell) return;
+
+            const need = parseInt(needCell.textContent) || 0;
+            const have = parseInt(newHave) || 0;
+            const left = Math.max(0, need - have);
+
+            haveInput.value = have;
+            leftCell.textContent = left;
+            leftCell.style.color = left === 0 ? 'green' : 'red';
+        }
+
+        // Обновление уровня модуля
+        function updateLevel(module, newLevel) {
+            fetch('/update_level', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ module: module, level: parseInt(newLevel) })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (!data.success) {
+                    alert('❌ ' + (data.error || 'Не удалось обновить уровень'));
+                    // Возвращаем старый уровень в селект
+                    const select = document.querySelector(`select[onchange*="'${module}'"]`);
+                    if (select) {
+                        select.value = select.dataset.oldValue || 0;
+                    }
+                    return;
+                }
+                // Обновляем таблицу
+                fetchItemsTable();
+            })
+            .catch(err => {
+                console.error('Ошибка:', err);
+                alert('❌ Ошибка соединения');
+            });
+        }
+
+        // Запрос и обновление таблицы (через JSON!)
+        function fetchItemsTable() {
+            fetch('/items_table')
+                .then(response => response.json())
+                .then(data => {
+                    const tbody = document.getElementById('items-tbody');
+                    if (!tbody) return;
+
+                    let html = '';
+                    data.items.forEach(item => {
+                        const color = item.left === 0 ? 'green' : 'red';
+                        const escapedName = item.item_name.replace(/"/g, '&quot;');
+                        html += `
+                            <tr data-item-name="${CSS.escape(item.item_name)}">
+                                <td><img src="/static/img/${item.item_image}" alt="${item.item_name}" width="48"></td>
+                                <td>${item.item_name}</td>
+                                <td class="need-col">${item.need}</td>
+                                <td>
+                                    <input type="number" min="0" value="${item.have}"
+                                           data-item-name="${CSS.escape(item.item_name)}"
+                                           style="width:60px; text-align:right;">
+                                </td>
+                                <td class="left-col" style="font-weight:bold;color:${color}">${item.left}</td>
+                            </tr>`;
+                    });
+                    tbody.innerHTML = html;
+                })
+                .catch(err => {
+                    console.error('Не удалось обновить таблицу:', err);
+                    alert('❌ Не удалось обновить список предметов');
+                });
+        }
+        // Делегирование событий для input
+        document.addEventListener('change', function(e) {
+            const input = e.target;
+            if (input.tagName === 'INPUT' && input.type === 'number') {
+                const itemName = input.dataset.itemName;
+                if (itemName) {
+                    const value = parseInt(input.value) || 0;
+                    if (value < 0) input.value = 0;
+                    updateHave(itemName, value);
+                }
+            }
+        });
+
+        // Сохраняем старый уровень для отката при ошибке
+        document.querySelectorAll('select').forEach(select => {
+            select.dataset.oldValue = select.value;
+            select.addEventListener('focus', function() {
+                this.dataset.oldValue = this.value;
+            });
+        });
+
+                // === ВКЛАДКИ ===
+        document.querySelectorAll('.tab-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const tabId = btn.dataset.tab;
+                
+                // Деактивируем всё
+                document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+                document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+                
+                // Активируем нужное
+                btn.classList.add('active');
+                document.getElementById('tab-' + tabId).classList.add('active');
+                
+                // Если открываем "next-level" — загружаем данные
+                if (tabId === 'next-level') {
+                    loadNextLevelItems();
+                }
+            });
+        });
+
+        // Загрузка предметов для следующего уровня
+        function loadNextLevelItems() {
+        const loader = document.getElementById('next-level-loader');
+        const table = document.getElementById('next-level-table');
+        const emptyMsg = document.getElementById('next-level-empty');
+        const tbody = document.getElementById('next-level-tbody');
+
+        loader.style.display = 'block';
+        table.style.display = 'none';
+        emptyMsg.style.display = 'none';
+
+        fetch('/next_level_items')
+            .then(response => response.json())
+            .then(data => {
+                loader.style.display = 'none';
+                const items = data.items || [];
+                
+                if (items.length === 0) {
+                    emptyMsg.style.display = 'block';
+                    return;
+                }
+
+                let html = '';
+                items.forEach(item => {
+                    const color = item.left === 0 ? 'green' : 'red';
+                    const escapedName = CSS.escape(item.item_name);
+
+                    // Формируем подсказку: "для Модуль (ур. X), Модуль2 (ур. Y)"
+                    let hintLines = item.entries.map(e => 
+                        `${e.module} (ур. ${e.level}) — ×${e.quantity}`
+                    ).join('<br>– ');
+
+                    html += `
+                        <tr data-item-name="${item.item_name}">
+                            <td><img src="/static/img/${item.item_image}" alt="${item.item_name}" width="32"></td>
+                            <td>
+                                ${item.item_name}
+                                <details style="margin-top:4px; font-size:0.85em; color:#666;">
+                                    <summary style="cursor:pointer; list-style:square;">🔹 Откуда нужно</summary>
+                                    – ${hintLines}
+                                </details>
+                            </td>
+                            <td class="need-col">${item.need}</td>
+                            <td>
+                                <input type="number" min="0" value="${item.have}"
+                                    data-item-name="${item.item_name}"
+                                    style="width:60px; text-align:right;">
+                            </td>
+                            <td class="left-col" style="font-weight:bold;color:${color}">${item.left}</td>
+                        </tr>`;
+                });
+                tbody.innerHTML = html;
+                table.style.display = 'table';
+            })
+            .catch(err => {
+                console.error('Ошибка загрузки next-level:', err);
+                loader.style.display = 'none';
+                alert('❌ Не удалось загрузить данные для следующего уровня');
+            });
+    }
+
+        // Обновим fetchItemsTable, чтобы скрывать next-level вкладку при обновлении "осталось"
+        function fetchItemsTable() {
+            fetch('/items_table')
+                .then(response => response.json())
+                .then(data => {
+                    const tbody = document.getElementById('items-tbody');
+                    if (!tbody) return;
+
+                    let html = '';
+                    data.items.forEach(item => {
+                        const color = item.left === 0 ? 'green' : 'red';
+                        const escapedName = CSS.escape(item.item_name);
+                        html += `
+                            <tr data-item-name="${escapedName}">
+                                <td><img src="/static/img/${item.item_image}" alt="${item.item_name}" width="32"></td>
+                                <td>${item.item_name}</td>
+                                <td class="need-col">${item.need}</td>
+                                <td>
+                                    <input type="number" min="0" value="${item.have}"
+                                        data-item-name="${escapedName}"
+                                        style="width:60px; text-align:right;">
+                                </td>
+                                <td class="left-col" style="font-weight:bold;color:${color}">${item.left}</td>
+                            </tr>`;
+                    });
+                    tbody.innerHTML = html;
+                    
+                    // Переключаем на вкладку "осталось", если сейчас открыта "next-level"
+                    if (document.querySelector('.tab-btn[data-tab="next-level"]').classList.contains('active')) {
+                        // Опционально: можно не переключать, но логично — при обновлении модуля возвращаться к основному
+                        document.querySelector('.tab-btn[data-tab="remaining"]').click();
+                    }
+                })
+                .catch(err => {
+                    console.error('Не удалось обновить таблицу:', err);
+                    alert('❌ Не удалось обновить список предметов');
+                });
+        }
+    </script>
+</body>
+</html>
