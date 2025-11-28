@@ -5,12 +5,13 @@
 1. Требования
 Python 3.8+
 Браузер (Chrome, Firefox, Edge)
-2. Клонирование и установка<code>
-git clone https://github.com/your-username/eft-hideout-tracker.git
+2. Клонирование и установка
+<code>
+git clone [https://github.com/your-username/eft-hideout-tracker.git](https://github.com/gen1us1y/TarkovHideoutTracker)
 cd eft-hideout-tracker
 pip install flask
 </code>
-3. Заполнение данными
+4. Заполнение данными
 Откройте http://localhost:5000 и можете начинать пользоваться.
 
 🗂️ Структура проекта
