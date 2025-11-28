@@ -44,7 +44,7 @@
                     <tbody id="items-tbody">
                         {% for item in items %}
                         <tr data-item-name="{{ item.item_name|e }}">
-                            <td><img src="{{ url_for('static', filename='img/' + item.item_image) }}" alt="{{ item.item_name|e }}" width="48"></td>
+                            <td><img src="{{ url_for('static', filename='img/' + item.item_image) }}" alt="{{ item.item_name|e }}" height="50%" style="margin-left: auto;margin-right: auto;display: block;"></td>
                             <td>{{ item.item_name|e }}</td>
                             <td class="need-col">{{ item.need }}</td>
                             <td>
@@ -168,7 +168,7 @@
                         const escapedName = item.item_name.replace(/"/g, '&quot;');
                         html += `
                             <tr data-item-name="${CSS.escape(item.item_name)}">
-                                <td><img src="/static/img/${item.item_image}" alt="${item.item_name}" width="48"></td>
+                                <td><img src="/static/img/${item.item_image}" alt="${item.item_name}" width="50%" style="margin-left: auto;margin-right: auto;display: block;"></td>
                                 <td>${item.item_name}</td>
                                 <td class="need-col">${item.need}</td>
                                 <td>
