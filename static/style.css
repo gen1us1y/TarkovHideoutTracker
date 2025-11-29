@@ -98,3 +98,40 @@ details summary:hover {
 details > summary {
     margin-bottom: 4px;
 }
+
+/* === Квесты === */
+.quests-left, .quests-right {
+    flex: 1;
+    min-width: 280px;
+}
+.quests-left {
+    background: #f8f9fa;
+    padding: 16px;
+    border-radius: 8px;
+    margin-right: 16px;
+}
+.trader {
+    margin-bottom: 20px;
+}
+.trader-header {
+    margin-bottom: 8px;
+}
+.trader-header label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+}
+.quests {
+    padding-left: 24px;
+}
+.quest {
+    margin: 6px 0;
+}
+.quest label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    font-size: 0.95em;
+}

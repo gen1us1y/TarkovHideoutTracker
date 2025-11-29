@@ -88,7 +88,88 @@ def index():
 
     items = get_items_status(conn)
     conn.close()
-    return render_template('index.html', modules=modules, items=items)
+    # В конце функции index(), ПЕРЕД return render_template(...)
+
+    # === Квесты (отдельное соединение) ===
+    conn_q = get_db()
+    cur_q = conn_q.cursor()
+
+    try:
+        # Получаем скрытых торговцев
+        cur_q.execute("SELECT trader_id FROM hidden_traders")
+        hidden_trader_ids = {row[0] for row in cur_q.fetchall()}
+
+        # Торговцы + их квесты
+        cur_q.execute("""
+            SELECT t.id AS trader_id, t.name AS trader_name,
+                q.id AS quest_id, q.name AS quest_name, q.is_completed
+            FROM traders t
+            LEFT JOIN quests q ON t.id = q.trader_id
+            ORDER BY t.name, q.id
+        """)
+        rows = cur_q.fetchall()
+
+        # Группируем по торговцам
+        traders_data = {}
+        for row in rows:
+            tid = row['trader_id']
+            if tid not in traders_data:
+                traders_data[tid] = {
+                    'id': tid,
+                    'name': row['trader_name'],
+                    'is_hidden': tid in hidden_trader_ids,
+                    'quests': []
+                }
+            if row['quest_id'] is not None:
+                traders_data[tid]['quests'].append({
+                    'id': row['quest_id'],
+                    'name': row['quest_name'],
+                    'is_completed': bool(row['is_completed'])
+                })
+
+        # Предметы для квестов
+        cur_q.execute("SELECT item_name, have FROM inventory")
+        have_map = {row['item_name']: row['have'] for row in cur_q.fetchall()}
+
+        need_items = {}
+        for trader in traders_data.values():
+            if trader['is_hidden']:
+                continue
+            for quest in trader['quests']:
+                if quest['is_completed']:
+                    continue
+                cur_q.execute("""
+                    SELECT item_name, item_image, SUM(quantity) as qty
+                    FROM quest_requirements
+                    WHERE quest_id = ?
+                    GROUP BY item_name, item_image
+                """, (quest['id'],))
+                for req in cur_q.fetchall():
+                    name = req['item_name']
+                    img = req['item_image']
+                    qty = req['qty']
+                    if name not in need_items:
+                        need_items[name] = {'item_name': name, 'item_image': img, 'need': 0}
+                    need_items[name]['need'] += qty
+
+        quest_items = []
+        for name, info in need_items.items():
+            have = have_map.get(name, 0)
+            left = max(0, info['need'] - have)
+            quest_items.append({
+                'item_name': name,
+                'item_image': info['item_image'],
+                'need': info['need'],
+                'have': have,
+                'left': left
+            })
+        quest_items.sort(key=lambda x: x['item_name'].lower())
+
+    finally:
+        conn_q.close()  # ← Обязательно закрываем!
+    return render_template('index.html',
+    modules=modules, items=items,
+    traders=list(traders_data.values()), quest_items=quest_items)
 
 
 @app.route('/update_level', methods=['POST'])
@@ -324,6 +405,152 @@ def next_level_items():
         print("ERROR in /next_level_items:", traceback.format_exc())
         result.sort(key=lambda x: x['item_name'].lower())
         return jsonify(items=[]), 500
+
+@app.route('/quests_data')
+def quests_data():
+    conn = get_db()
+    cur = conn.cursor()
+
+    # Получаем скрытых торговцев
+    cur.execute("SELECT trader_id FROM hidden_traders")
+    hidden_trader_ids = {row[0] for row in cur.fetchall()}
+
+    # Торговцы + их квесты
+    cur.execute("""
+        SELECT t.id AS trader_id, t.name AS trader_name,
+               q.id AS quest_id, q.name AS quest_name, q.is_completed
+        FROM traders t
+        LEFT JOIN quests q ON t.id = q.trader_id
+        ORDER BY t.name, q.id
+    """)
+    rows = cur.fetchall()
+
+    # Группируем по торговцам
+    traders = {}
+    for row in rows:
+        tid = row['trader_id']
+        if tid not in traders:
+            traders[tid] = {
+                'id': tid,
+                'name': row['trader_name'],
+                'is_hidden': tid in hidden_trader_ids,
+                'quests': []
+            }
+        if row['quest_id'] is not None:
+            traders[tid]['quests'].append({
+                'id': row['quest_id'],
+                'name': row['quest_name'],
+                'is_completed': bool(row['is_completed'])
+            })
+
+    # Получаем инвентарь для расчёта "нужно"
+    cur.execute("SELECT item_name, have FROM inventory")
+    have_map = {row['item_name']: row['have'] for row in cur.fetchall()}
+
+    # Считаем, что нужно по НЕВЫПОЛНЕННЫМ квестам (и не от скрытых торговцев!)
+    need_items = {}
+    for trader in traders.values():
+        if trader['is_hidden']:
+            continue
+        for quest in trader['quests']:
+            if quest['is_completed']:
+                continue
+            cur.execute("""
+                SELECT item_name, item_image, SUM(quantity) as qty
+                FROM quest_requirements
+                WHERE quest_id = ?
+                GROUP BY item_name, item_image
+            """, (quest['id'],))
+            for req in cur.fetchall():
+                name = req['item_name']
+                img = req['item_image']
+                qty = req['qty']
+                if name not in need_items:
+                    need_items[name] = {'item_name': name, 'item_image': img, 'need': 0}
+                need_items[name]['need'] += qty
+
+    # Формируем итоговый список предметов
+    items = []
+    for name, info in need_items.items():
+        have = have_map.get(name, 0)
+        left = max(0, info['need'] - have)
+        items.append({
+            'item_name': name,
+            'item_image': info['item_image'],
+            'need': info['need'],
+            'have': have,
+            'left': left
+        })
+    items.sort(key=lambda x: x['item_name'].lower())
+
+    conn.close()
+    return jsonify(
+        traders=list(traders.values()),
+        items=items
+    )
+
+
+@app.route('/toggle_quest', methods=['POST'])
+def toggle_quest():
+    try:
+        data = request.json
+        quest_id = int(data['quest_id'])
+        completed = bool(data['completed'])
+
+        conn = get_db()
+        cur = conn.cursor()
+
+        if completed:
+            # Проверим, хватает ли предметов
+            cur.execute("""
+                SELECT item_name, SUM(quantity) as qty
+                FROM quest_requirements
+                WHERE quest_id = ?
+                GROUP BY item_name
+            """, (quest_id,))
+            requirements = cur.fetchall()
+
+            insufficient = []
+            for req in requirements:
+                name = req['item_name']
+                need = req['qty']
+                cur.execute("SELECT have FROM inventory WHERE item_name = ?", (name,))
+                have = cur.fetchone()
+                if not have or have[0] < need:
+                    insufficient.append(f"{name} (нужно: {need}, есть: {have[0] if have else 0})")
+
+            if insufficient:
+                conn.close()
+                return jsonify(
+                    success=False,
+                    error="Недостаточно предметов",
+                    missing=insufficient
+                ), 400
+
+            # Списываем
+            for req in requirements:
+                cur.execute("""
+                    UPDATE inventory
+                    SET have = have - ?
+                    WHERE item_name = ?
+                """, (req['qty'], req['item_name']))
+
+        # Обновляем статус квеста
+        cur.execute("""
+            UPDATE quests
+            SET is_completed = ?
+            WHERE id = ?
+        """, (1 if completed else 0, quest_id))
+
+        conn.commit()
+        conn.close()
+        return jsonify(success=True)
+    except Exception as e:
+        import traceback
+        print("ERROR in /toggle_quest:", traceback.format_exc())
+        return jsonify(success=False, error=str(e)), 500
+
+
 
 if __name__ == '__main__':
     init_db()
